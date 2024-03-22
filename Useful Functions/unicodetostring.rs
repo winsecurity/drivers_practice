@@ -19,3 +19,9 @@ pub fn unicodetostring(u:&UNICODE_STRING) -> [u8;1024] {
     
 
 }
+let buff = unicodetostring(&driver.DriverName);
+        let res = core::str::from_utf8(&buff);
+        if res.is_ok(){
+            // printing drivername - \Driver\testdriver
+            DbgPrint("%s\n\0".as_ptr(),buff.as_ptr() as *const c_void);
+        }
