@@ -144,22 +144,109 @@ struct rtl_balanced_node{
 pub fn traverse(rootnode: rtl_balanced_node){
     unsafe{
 
-          // Vad - 56 61 64 20
-        // VadS - 56 61 64 53
+          // Vad - 56 61 64 20 - 86 97 100 32 in int
+        // VadS - 56 61 64 53 -  86 97 100 83 in int
 
 
         if rootnode.left!=0{
-            DbgPrint("left node: %I64x\n\0".as_ptr(), rootnode.left as c_ulonglong);
+            //DbgPrint("left node: %I64x\n\0".as_ptr(), rootnode.left as c_ulonglong);
             
             // enumerating the node mmvad or mmvad_short
+            let tag = core::ptr::read((rootnode.left-12) as *const [u8;4]);
             
-            
+            // VadS or Vad'space'
+            if tag==[86u8,97,100,83] || tag==[86u8,97 ,100,32]{
+                // vads + 0x18 startingvpn
+                // vads + 0x1c endingvpn
+                let startingvpn = core::ptr::read((rootnode.left + 0x18) as *const u32);
+                let endingvpn = core::ptr::read((rootnode.left + 0x1c) as *const u32);
+                
+                DbgPrint("left node: %I64x -> %I64x to %I64x\n\0".as_ptr(), rootnode.left as c_ulonglong, startingvpn as c_ulong,endingvpn as c_ulong);
+
+            }
+
+
+            // printing file object name like ntdll.dll
+            // Vad
+            if tag==[86u8,97 ,100,32]{
+                // Vad + 0x48 - pointer to subsection
+                let subsection = core::ptr::read((rootnode.left+0x48) as *const u64);
+                // starting member is pointer to controlarea structure
+                let controlarea = core::ptr::read(subsection as *const u64);
+                // controlarea + 0x40 gives file_pointer _EX_FAST_REF
+                let filepointer = core::ptr::read((controlarea + 0x40) as *const u64);
+                // last nibble is reference count of this object
+                // we need to nullify this reference count
+                let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
+                // filepointer + 0x58 gives unicode_String of module
+                if filepointer !=0{
+                    let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
+                    // filepointer + 0x58 gives unicode_String of module
+                    let us = core::ptr::read((filepointer+0x58) as *const UNICODE_STRING);
+                    if us.Length!=0 && us.MaximumLength!=0{
+                        let dllname = unicodetostring(&us) ;
+                        DbgPrint("dllname: %s\n\0".as_ptr(), dllname.as_ptr() as *const u8);
+                        
+                    }
+                }
+                
+               
+
+
+            }
+
+
             vadcount +=1;
             traverse(*(rootnode.clone().left as *mut rtl_balanced_node));
         }
 
         if rootnode.right!=0{
-            DbgPrint("right node: %I64x\n\0".as_ptr(), rootnode.right as c_ulonglong);
+            //DbgPrint("right node: %I64x\n\0".as_ptr(), rootnode.right as c_ulonglong);
+           
+            // enumerating the node mmvad or mmvad_short
+            let tag = core::ptr::read((rootnode.right-12) as *const [u8;4]);
+            
+            // VadS or Vad'space'
+            if tag==[86u8,97,100,83] || tag==[86u8,97,100,32]{
+                // vads + 0x18 startingvpn
+                // vads + 0x1c endingvpn
+                let startingvpn = core::ptr::read((rootnode.right + 0x18) as *const u32);
+                let endingvpn = core::ptr::read((rootnode.right + 0x1c) as *const u32);
+                
+                DbgPrint("right node: %I64x -> %I64x to %I64x\n\0".as_ptr(), rootnode.right as c_ulonglong, startingvpn as c_ulong,endingvpn as c_ulong);
+
+            }
+           
+            
+            // printing file object name like ntdll.dll
+            // Vad
+            if tag==[86u8,97 ,100,32]{
+                // Vad + 0x48 - pointer to subsection
+                let subsection = core::ptr::read((rootnode.right+0x48) as *const u64);
+                // starting member is pointer to controlarea structure
+                let controlarea = core::ptr::read(subsection as *const u64);
+                // controlarea + 0x40 gives file_pointer _EX_FAST_REF
+                let filepointer = core::ptr::read((controlarea + 0x40) as *const u64);
+                // last nibble is reference count of this object
+                // we need to nullify this reference count
+                if filepointer !=0{
+                    let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
+                    // filepointer + 0x58 gives unicode_String of module
+                    let us = core::ptr::read((filepointer+0x58) as *const UNICODE_STRING);
+                    if us.Length!=0 && us.MaximumLength!=0{
+                        let dllname = unicodetostring(&us) ;
+                        DbgPrint("dllname: %s\n\0".as_ptr(), dllname.as_ptr() as *const u8);
+                        
+                    }
+                }
+                
+               
+
+
+            }
+
+
+
             vadcount +=1;
             traverse(*(rootnode.clone().right as *mut rtl_balanced_node));
 
@@ -179,7 +266,7 @@ pub extern "system" fn driver_entry(_driver: &mut DRIVER_OBJECT,
         //PsSetCreateProcessNotifyRoutine(processcreationcallback as *mut c_void, 0);
     
         let mut eprocess:u64 = 0;
-        PsLookupProcessByProcessId(9168 as HANDLE, &mut eprocess as *mut _ as *mut c_void);
+        PsLookupProcessByProcessId(PsGetCurrentProcessId(), &mut eprocess as *mut _ as *mut c_void);
 
         if eprocess==0{
             return 0;
@@ -235,6 +322,31 @@ pub extern "system" fn driver_entry(_driver: &mut DRIVER_OBJECT,
     }   
 
     0
+}
+
+
+
+
+pub fn unicodetostring(u:&UNICODE_STRING) -> [u8;1024] {
+
+    let mut buffer:[u8;1024] = [0;1024];
+
+    for i in 0..u.Length/2{
+        let mut u16byte: u16 = 0;
+        let mmcopy = MM_COPY_ADDRESS{address: (u.Buffer as usize + (i as usize*2)) as *mut c_void} ;
+        let mut byteswritten = 0;
+        let res = unsafe{MmCopyMemory(&mut u16byte as *mut _ as *mut c_void, 
+            mmcopy, 
+            2, 
+            0x2, 
+            &mut byteswritten)};
+
+        buffer[i as usize] = (u16byte&0xFF) as u8;    
+    }
+    
+    return buffer;
+    
+
 }
 
 
