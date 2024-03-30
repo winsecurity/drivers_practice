@@ -177,7 +177,7 @@ pub fn traverse(rootnode: rtl_balanced_node){
                 let filepointer = core::ptr::read((controlarea + 0x40) as *const u64);
                 // last nibble is reference count of this object
                 // we need to nullify this reference count
-                let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
+                //let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
                 // filepointer + 0x58 gives unicode_String of module
                 if filepointer !=0{
                     let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
@@ -227,7 +227,7 @@ pub fn traverse(rootnode: rtl_balanced_node){
 
 
 
-                            
+
 
                         }
 
@@ -354,7 +354,7 @@ pub extern "system" fn driver_entry(_driver: &mut DRIVER_OBJECT,
         //PsSetCreateProcessNotifyRoutine(processcreationcallback as *mut c_void, 0);
     
         let mut eprocess:u64 = 0;
-        PsLookupProcessByProcessId(PsGetCurrentProcessId(), &mut eprocess as *mut _ as *mut c_void);
+        PsLookupProcessByProcessId(8260 as HANDLE, &mut eprocess as *mut _ as *mut c_void);
 
         if eprocess==0{
             return 0;
