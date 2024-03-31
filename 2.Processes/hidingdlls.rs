@@ -197,7 +197,7 @@ pub fn traverse(rootnode: rtl_balanced_node){
                                 let parentnodeaddress = tempnode.parentvalue&0xFFFFFFFF_FFFFFFF0;
                                 core::ptr::write(parentnodeaddress as *mut u64, 0);
                                 DbgPrint("deleted dllname: %s\n\0".as_ptr(), dllname.as_ptr() as *const u8);
-                            
+                                return ();
                             }
                         
                             
@@ -212,14 +212,14 @@ pub fn traverse(rootnode: rtl_balanced_node){
                                     core::ptr::write((tempnode.right + 0x10) as *mut u64,parentnodeaddress);
                                     // parent.left = childnode
                                     core::ptr::write(parentnodeaddress as *mut u64, tempnode.right);
-
+                                         return ();
                                 }
                                 if tempnode.left!=0{
                                      // childnode.parentvalue = parentnodeaddress
                                      core::ptr::write((tempnode.left + 0x10) as *mut u64,parentnodeaddress);
                                      // parent.left = childnode
                                     core::ptr::write(parentnodeaddress as *mut u64, tempnode.left);
-
+                                     return ();
                                 }
                        
                             }
