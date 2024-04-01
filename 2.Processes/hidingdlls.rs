@@ -137,6 +137,13 @@ struct rtl_balanced_node{
     parentvalue: u64
 }
 
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct myunicodestring{
+    Length: u16,
+    MaximumLength: u16,
+    Buffer: u64
+}
 
 
 
@@ -147,98 +154,180 @@ pub fn traverse(rootnode: rtl_balanced_node){
           // Vad - 56 61 64 20 - 86 97 100 32 in int
         // VadS - 56 61 64 53 -  86 97 100 83 in int
 
-
+        
         if rootnode.left!=0{
-            //DbgPrint("left node: %I64x\n\0".as_ptr(), rootnode.left as c_ulonglong);
             
             // enumerating the node mmvad or mmvad_short
-            let tag = core::ptr::read((rootnode.left-12) as *const [u8;4]);
-            
+            let mmcopy = MM_COPY_ADDRESS{address:(rootnode.left - 12) as *mut c_void};
+            let mut byteswritten = 0;
+            let mut tag:[u8;5] = [0;5];
+            let res = MmCopyMemory(tag.as_mut_ptr() as *mut c_void, 
+            mmcopy, 4, 0x2, &mut byteswritten);
             // VadS or Vad'space'
-            if tag==[86u8,97,100,83] || tag==[86u8,97 ,100,32]{
+          
                 // vads + 0x18 startingvpn
                 // vads + 0x1c endingvpn
-                let startingvpn = core::ptr::read((rootnode.left + 0x18) as *const u32);
-                let endingvpn = core::ptr::read((rootnode.left + 0x1c) as *const u32);
                 
-                DbgPrint("left node: %I64x -> %I64x to %I64x\n\0".as_ptr(), rootnode.left as c_ulonglong, startingvpn as c_ulong,endingvpn as c_ulong);
-
+            if res==STATUS_SUCCESS&&byteswritten==4{
+                DbgPrint("tag: %s\n\0".as_ptr(),tag.as_ptr() as *const u8 );
             }
 
 
-            // printing file object name like ntdll.dll
+
+            let mut startingvpn: u32 = 0;
+            let mmcopy = MM_COPY_ADDRESS{address:(rootnode.left+0x18) as *mut c_void};
+            let res = MmCopyMemory(&mut startingvpn as *mut _ as *mut c_void, 
+            mmcopy, 4, 0x2, &mut byteswritten);
+
+            if res!=STATUS_SUCCESS{
+                DbgPrint("reading startingvpn error: %I64x\n\0".as_ptr(), res as c_long);
+            }
+
+
+
+            let mut endingvpn: u32=0;
+            let mmcopy = MM_COPY_ADDRESS{address:(rootnode.left+0x1c) as *mut c_void};
+            let res = MmCopyMemory(&mut endingvpn as *mut _ as *mut c_void, 
+            mmcopy, 4, 0x2, &mut byteswritten);
+
+            if res!=STATUS_SUCCESS{
+                DbgPrint("reading endingvpn error: %I64x\n\0".as_ptr(), res as c_long);
+            }
+            //let startingvpn = core::ptr::read((rootnode.left + 0x18) as *const u32);
+            //let endingvpn = core::ptr::read((rootnode.left + 0x1c) as *const u32);
+                
+
+            DbgPrint("left node: %I64x -> %I64x to %I64x\n\0".as_ptr(), rootnode.left as c_ulonglong, startingvpn as c_ulong,endingvpn as c_ulong);
+
             // Vad
-            if tag==[86u8,97 ,100,32]{
+           
+            
+            if tag==[86u8,97 ,100,32,0] {
                 // Vad + 0x48 - pointer to subsection
-                let subsection = core::ptr::read((rootnode.left+0x48) as *const u64);
+                let mut byteswritten = 0;
+                let  mmcopy = MM_COPY_ADDRESS{address:(rootnode.left+0x48) as *mut c_void};
+
                 // starting member is pointer to controlarea structure
-                let controlarea = core::ptr::read(subsection as *const u64);
-                // controlarea + 0x40 gives file_pointer _EX_FAST_REF
-                let filepointer = core::ptr::read((controlarea + 0x40) as *const u64);
+                let mut subsection:u64 = 0;
+                let mut controlarea:u64 = 0; 
+                let mut filepointer:u64 = 0;   
+                MmCopyMemory(&mut subsection as *mut _ as *mut c_void, 
+                    mmcopy, 8, 0x2, &mut byteswritten);
+                
+                if res==STATUS_SUCCESS&&byteswritten==8{
+                    let mmcopy = MM_COPY_ADDRESS{address:(subsection) as *mut c_void};
+                    let res2= MmCopyMemory(&mut controlarea as *mut _ as *mut c_void, 
+                        mmcopy, 8, 0x2, &mut byteswritten);
+                    
+                    if res2==STATUS_SUCCESS&&byteswritten==8{
+                    // controlarea + 0x40 gives file_pointer _EX_FAST_REF
+                    let mmcopy = MM_COPY_ADDRESS{address:(controlarea+0x40) as *mut c_void};
+                    let res3 = MmCopyMemory(&mut filepointer as *mut _ as *mut c_void, 
+                        mmcopy, 8, 0x2, &mut byteswritten);
+                    
+                    if res3==STATUS_SUCCESS&&byteswritten==8{
+                           // last nibble is reference count of this object
+                        // we need to nullify this reference count
+                        //let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
+                        // filepointer + 0x58 gives unicode_String of module
+                        let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
+                        if filepointer!=0{
+                           // DbgPrint("filepointer: %I64x\n\0".as_ptr(),  filepointer as c_ulonglong);
+
+                            
+                            let mut us:[u8;16] = [0;16];
+                            let mmcopy = MM_COPY_ADDRESS{address:(filepointer+0x58) as *mut c_void};
+                            let res4 = MmCopyMemory(us.as_mut_ptr() as *mut c_void, 
+                            mmcopy, 16, 0x2, &mut byteswritten);
+
+                            if res4==STATUS_SUCCESS&&byteswritten==16{
+                                let mut us = *(us.as_ptr() as *const UNICODE_STRING);
+                                //DbgPrint("length: %I64x, maxlen: %I64x, buffer: %I64x".as_ptr(),
+                                //us.Length as c_uint, us.MaximumLength as c_uint, us.Buffer as c_ulonglong);   
+                                //let mut dllname = unicodetostring(& mut us);
+                               
+                                let ntdllbytes = [110u8,0,116,0,100,0,108,0,108,0,46,0,100,0,108,0,108,0];
+                                if us.Length-ntdllbytes.len() as u16>0{
+                                    let mut index = us.Length-18;
+                                    let mut founddll = true;
+                                    for k in index..us.Length{
+                                        let t = core::ptr::read((us.Buffer as usize+k as usize) as *const u8);
+                                        if t!=ntdllbytes[(k-index) as usize]{
+
+                                            founddll=false;
+                                            break;
+                                        }
+                                    }
+                                    if founddll==true{
+                                        DbgPrint("filepointer: %I64x\n\0".as_ptr(),  filepointer as c_ulonglong);
+
+                                        DbgPrint("yay found ntdll.dll\n\0".as_ptr());
+                                   
+                                        //checking if our node is leaf node then parent node points to null
+                                        let tempnode = *(rootnode.left as *mut rtl_balanced_node);
+                                        if tempnode.right==0 && tempnode.left==0{
+                                            let parentnodeaddress = tempnode.parentvalue&0xFFFFFFFF_FFFFFFF0;
+                                            core::ptr::write(parentnodeaddress as *mut u64, 0 as u64);
+                                            DbgPrint("deleted ntdll.dll\n\0".as_ptr());
+                                            return ();
+                                        
+                                        }
+                                   
+
+
+                                        // if our dll node has only one child then point this child to parentnode
+                                        if (tempnode.left==0 &&tempnode.right!=0) || (tempnode.left!=0 && tempnode.right==0) {
+                                            let parentnodeaddress = tempnode.parentvalue&0xFFFFFFFF_FFFFFFF0;
+                                            if tempnode.right!=0{
+            
+                                                // childnode.parentvalue = parentnodeaddress
+                                                core::ptr::write((tempnode.right + 0x10) as *mut u64,parentnodeaddress);
+                                                // parent.left = childnode
+                                                core::ptr::write(parentnodeaddress as *mut u64, tempnode.right);
+                                                DbgPrint("deleted ntdll.dll\n\0".as_ptr());
+
+                                                     return ();
+                                            }
+                                            if tempnode.left!=0{
+                                                 // childnode.parentvalue = parentnodeaddress
+                                                 core::ptr::write((tempnode.left + 0x10) as *mut u64,parentnodeaddress);
+                                                 // parent.left = childnode
+                                                core::ptr::write(parentnodeaddress as *mut u64, tempnode.left);
+                                                DbgPrint("deleted ntdll.dll\n\0".as_ptr());
+
+                                                 return ();
+                                            }
+                                   
+                                        }
+            
+
+
+                                    }
+
+                                }
+                                
+
+                                //DbgPrint("dllname: %wZ\n\0".as_ptr(),(filepointer+0x58));
+                                
+                                
+                            }
+
+                            
+                        }
+                          
+                    }
+
+                    }
+                    
+
+                }
+                //let controlarea = core::ptr::read(subsection as *const u64);
+                //let filepointer = core::ptr::read((controlarea + 0x40) as *const u64);
                 // last nibble is reference count of this object
                 // we need to nullify this reference count
                 //let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
                 // filepointer + 0x58 gives unicode_String of module
-                if filepointer !=0{
-                    let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
-                    // filepointer + 0x58 gives unicode_String of module
-                    let us = core::ptr::read((filepointer+0x58) as *const UNICODE_STRING);
-                    if us.Length!=0 && us.MaximumLength!=0{
-                        let dllname = unicodetostring(&us) ;
-                        DbgPrint("dllname: %s\n\0".as_ptr(), dllname.as_ptr() as *const u8);
-                        let dllnamestring = core::str::from_utf8(&dllname).unwrap();
-                        if dllnamestring.contains("ntdll.dll"){
-                           
-                            let tempnode = *(rootnode.clone().left as *mut rtl_balanced_node);
-                             // deleting if its leaf node
-                            // go to that node and check if left and right are 0
-                            // just put parent's node left to 0
-                            if tempnode.left==0 && tempnode.right==0{
-                                let parentnodeaddress = tempnode.parentvalue&0xFFFFFFFF_FFFFFFF0;
-                                core::ptr::write(parentnodeaddress as *mut u64, 0);
-                                DbgPrint("deleted dllname: %s\n\0".as_ptr(), dllname.as_ptr() as *const u8);
-                                return ();
-                            }
-                        
-                            
-                            
-                            // if our node contains only one child
-                            // we can link this child node to  our parent's node
-                            if (tempnode.left==0 &&tempnode.right!=0) || (tempnode.left!=0 && tempnode.right==0) {
-                                let parentnodeaddress = tempnode.parentvalue&0xFFFFFFFF_FFFFFFF0;
-                                if tempnode.right!=0{
-
-                                    // childnode.parentvalue = parentnodeaddress
-                                    core::ptr::write((tempnode.right + 0x10) as *mut u64,parentnodeaddress);
-                                    // parent.left = childnode
-                                    core::ptr::write(parentnodeaddress as *mut u64, tempnode.right);
-                                         return ();
-                                }
-                                if tempnode.left!=0{
-                                     // childnode.parentvalue = parentnodeaddress
-                                     core::ptr::write((tempnode.left + 0x10) as *mut u64,parentnodeaddress);
-                                     // parent.left = childnode
-                                    core::ptr::write(parentnodeaddress as *mut u64, tempnode.left);
-                                     return ();
-                                }
-                       
-                            }
-
-
-
-
-
-
-                        }
-
-                        
-                        
-                    }
-                }
                 
-               
-
-
             }
 
 
@@ -247,94 +336,198 @@ pub fn traverse(rootnode: rtl_balanced_node){
         }
 
         if rootnode.right!=0{
-            //DbgPrint("right node: %I64x\n\0".as_ptr(), rootnode.right as c_ulonglong);
            
             // enumerating the node mmvad or mmvad_short
-            let tag = core::ptr::read((rootnode.right-12) as *const [u8;4]);
-            
+            let mmcopy = MM_COPY_ADDRESS{address:(rootnode.right - 12) as *mut c_void};
+            let mut byteswritten = 0;
+            let mut tag:[u8;5] = [0;5];
+            let res = MmCopyMemory(tag.as_mut_ptr() as *mut c_void, 
+            mmcopy, 4, 0x2, &mut byteswritten);
             // VadS or Vad'space'
-            if tag==[86u8,97,100,83] || tag==[86u8,97,100,32]{
+          
                 // vads + 0x18 startingvpn
                 // vads + 0x1c endingvpn
-                let startingvpn = core::ptr::read((rootnode.right + 0x18) as *const u32);
-                let endingvpn = core::ptr::read((rootnode.right + 0x1c) as *const u32);
                 
-                DbgPrint("right node: %I64x -> %I64x to %I64x\n\0".as_ptr(), rootnode.right as c_ulonglong, startingvpn as c_ulong,endingvpn as c_ulong);
-
+            if res==STATUS_SUCCESS&&byteswritten==4{
+                DbgPrint("tag: %s\n\0".as_ptr(),tag.as_ptr() as *const u8 );
             }
-           
+
+
+
+            let mut startingvpn: u32 = 0;
+            let mmcopy = MM_COPY_ADDRESS{address:(rootnode.right+0x18) as *mut c_void};
+            let res = MmCopyMemory(&mut startingvpn as *mut _ as *mut c_void, 
+            mmcopy, 4, 0x2, &mut byteswritten);
+
+            if res!=STATUS_SUCCESS{
+                DbgPrint("reading startingvpn error: %I64x\n\0".as_ptr(), res as c_long);
+            }
+
+
+
+            let mut endingvpn: u32=0;
+            let mmcopy = MM_COPY_ADDRESS{address:(rootnode.right+0x1c) as *mut c_void};
+            let res = MmCopyMemory(&mut endingvpn as *mut _ as *mut c_void, 
+            mmcopy, 4, 0x2, &mut byteswritten);
+
+            if res!=STATUS_SUCCESS{
+                DbgPrint("reading endingvpn error: %I64x\n\0".as_ptr(), res as c_long);
+            }
             
-            // printing file object name like ntdll.dll
-            // Vad
-            if tag==[86u8,97 ,100,32]{
+            //let startingvpn = core::ptr::read((rootnode.right + 0x18) as *const u32);
+            //let endingvpn = core::ptr::read((rootnode.right + 0x1c) as *const u32);
+                
+            DbgPrint("right node: %I64x -> %I64x to %I64x\n\0".as_ptr(), rootnode.right as c_ulonglong, startingvpn as c_ulong,endingvpn as c_ulong);
+
+
+           
+            if tag==[86u8,97 ,100,32,0] {
                 // Vad + 0x48 - pointer to subsection
-                let subsection = core::ptr::read((rootnode.right+0x48) as *const u64);
+                let mut byteswritten = 0;
+                let  mmcopy = MM_COPY_ADDRESS{address:(rootnode.right+0x48) as *mut c_void};
+
                 // starting member is pointer to controlarea structure
-                let controlarea = core::ptr::read(subsection as *const u64);
-                // controlarea + 0x40 gives file_pointer _EX_FAST_REF
-                let filepointer = core::ptr::read((controlarea + 0x40) as *const u64);
+                let mut subsection:u64 = 0;
+                let mut controlarea:u64 = 0; 
+                let mut filepointer:u64 = 0;   
+                MmCopyMemory(&mut subsection as *mut _ as *mut c_void, 
+                    mmcopy, 8, 0x2, &mut byteswritten);
+                
+                if res==STATUS_SUCCESS&&byteswritten==8{
+                    let mmcopy = MM_COPY_ADDRESS{address:(subsection) as *mut c_void};
+                    let res2= MmCopyMemory(&mut controlarea as *mut _ as *mut c_void, 
+                        mmcopy, 8, 0x2, &mut byteswritten);
+                    
+                    if res2==STATUS_SUCCESS&&byteswritten==8{
+                    // controlarea + 0x40 gives file_pointer _EX_FAST_REF
+                    let mmcopy = MM_COPY_ADDRESS{address:(controlarea+0x40) as *mut c_void};
+                    let res3 = MmCopyMemory(&mut filepointer as *mut _ as *mut c_void, 
+                        mmcopy, 8, 0x2, &mut byteswritten);
+                    
+                    if res3==STATUS_SUCCESS&&byteswritten==8{
+                           // last nibble is reference count of this object
+                        // we need to nullify this reference count
+                        //let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
+                        // filepointer + 0x58 gives unicode_String of module
+                        let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
+                        if filepointer!=0{
+                            //DbgPrint("filepointer: %I64x\n\0".as_ptr(),  filepointer as c_ulonglong);
+
+
+                            let mut us:[u8;16] = [0;16];
+                            let mmcopy = MM_COPY_ADDRESS{address:(filepointer+0x58) as *mut c_void};
+                            let res4 = MmCopyMemory(us.as_mut_ptr() as *mut c_void, 
+                            mmcopy, 16, 0x2, &mut byteswritten);
+
+                            if res4==STATUS_SUCCESS&&byteswritten==16{
+                                let mut us = *(us.as_ptr() as *const UNICODE_STRING);
+                                //DbgPrint("length: %I64x, maxlen: %I64x, buffer: %I64x".as_ptr(),
+                                //us.Length as c_uint, us.MaximumLength as c_uint, us.Buffer as c_ulonglong);   
+                                //let mut dllname = unicodetostring(& mut us);
+                               
+
+                                let ntdllbytes = [110u8,0,116,0,100,0,108,0,108,0,46,0,100,0,108,0,108,0];
+                                if us.Length-ntdllbytes.len() as u16>0{
+                                    let mut index = us.Length-18;
+                                    let mut founddll = true;
+                                    for k in index..us.Length{
+                                        let t = core::ptr::read((us.Buffer as usize+k as usize) as *const u8);
+                                        if t!=ntdllbytes[(k-index) as usize]{
+
+                                            founddll=false;
+                                            break;
+                                        }
+                                    }
+                                    if founddll==true{
+                                        DbgPrint("filepointer: %I64x\n\0".as_ptr(),  filepointer as c_ulonglong);
+
+                                        DbgPrint("yay found ntdll.dll\n\0".as_ptr());
+                                    
+                                        //checking if our node is leaf node then parent node points to null
+                                        let tempnode = *(rootnode.right as *mut rtl_balanced_node);
+                                        if tempnode.right==0 && tempnode.left==0{
+                                            let parentnodeaddress = tempnode.parentvalue&0xFFFFFFFF_FFFFFFF0;
+                                            core::ptr::write((parentnodeaddress+0x8) as *mut u64, 0 as u64);
+                                            DbgPrint("deleted ntdll.dll\n\0".as_ptr());
+                                            return ();
+                                        
+                                        }
+
+
+
+                                         // if our dll node has only one child then point this child to parentnode
+                                         if (tempnode.left==0 &&tempnode.right!=0) || (tempnode.left!=0 && tempnode.right==0) {
+                                            let parentnodeaddress = tempnode.parentvalue&0xFFFFFFFF_FFFFFFF0;
+                                            if tempnode.right!=0{
+            
+                                                // childnode.parentvalue = parentnodeaddress
+                                                core::ptr::write((tempnode.right + 0x10) as *mut u64,parentnodeaddress);
+                                                // parent.left = childnode
+                                                core::ptr::write((parentnodeaddress+0x8) as *mut u64, tempnode.right);
+                                                DbgPrint("deleted ntdll.dll\n\0".as_ptr());
+
+                                                     return ();
+                                            }
+                                            if tempnode.left!=0{
+                                                 // childnode.parentvalue = parentnodeaddress
+                                                 core::ptr::write((tempnode.left + 0x10) as *mut u64,parentnodeaddress);
+                                                 // parent.left = childnode
+                                                core::ptr::write((parentnodeaddress+0x8) as *mut u64, tempnode.left);
+                                                DbgPrint("deleted ntdll.dll\n\0".as_ptr());
+
+                                                 return ();
+                                            }
+                                   
+                                        }
+            
+
+
+
+
+
+
+
+
+                                    
+                                    
+                                    }
+
+                                }
+                                
+
+
+                                //DbgPrint("dllname: %wZ\n\0".as_ptr(), (filepointer+0x58) );
+                                
+                                
+                                
+
+                            }
+
+
+
+                            //let us = core::ptr::read((filepointer+0x58) as *const UNICODE_STRING);
+                            //if us.Length!=0 && us.MaximumLength!=0{
+                                //let mut dllname = unicodetostring(&us) ;
+                                //DbgPrint("dllname: %s\n\0".as_ptr(), dllname.as_ptr() as *const u8);
+                            //}
+                        }
+                            
+                    }
+
+                    }
+                    
+
+                }
+                //let controlarea = core::ptr::read(subsection as *const u64);
+                //let filepointer = core::ptr::read((controlarea + 0x40) as *const u64);
                 // last nibble is reference count of this object
                 // we need to nullify this reference count
-                if filepointer !=0{
-                    let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
-                    // filepointer + 0x58 gives unicode_String of module
-                    let us = core::ptr::read((filepointer+0x58) as *const UNICODE_STRING);
-                    if us.Length!=0 && us.MaximumLength!=0{
-                        let dllname = unicodetostring(&us) ;
-                        DbgPrint("dllname: %s\n\0".as_ptr(), dllname.as_ptr() as *const u8);
-                        
-                        
-                        let dllnamestring = core::str::from_utf8(&dllname).unwrap();
-                        if dllnamestring.contains("ntdll.dll"){
-                            
-                            let tempnode = *(rootnode.clone().right as *mut rtl_balanced_node);
-                            
-                            // deleting leaf node
-                            // go to that node and check if left and right are 0
-                            if tempnode.left==0 && tempnode.right==0{
-                                let parentnodeaddress = tempnode.parentvalue&0xFFFFFFFF_FFFFFFF0;
-                                core::ptr::write((parentnodeaddress+0x8) as *mut u64, 0);
-                                DbgPrint("deleted dllname: %s\n\0".as_ptr(), dllname.as_ptr() as *const u8);
-                            
-                            }
-                        
-                        
-                              // if our node contains only one child
-                            // we can link this child node to  our parent's node
-                            if (tempnode.left==0 &&tempnode.right!=0) || (tempnode.left!=0 && tempnode.right==0) {
-                                let parentnodeaddress = tempnode.parentvalue&0xFFFFFFFF_FFFFFFF0;
-                                if tempnode.right!=0{
-
-                                    // childnode.parentvalue = parentnodeaddress
-                                    core::ptr::write((tempnode.right + 0x10) as *mut u64,parentnodeaddress);
-                                    // parent.left = childnode
-                                    core::ptr::write((parentnodeaddress+0x8) as *mut u64, tempnode.right);
-
-                                }
-                                if tempnode.left!=0{
-                                     // childnode.parentvalue = parentnodeaddress
-                                     core::ptr::write((tempnode.left + 0x10) as *mut u64,parentnodeaddress);
-                                     // parent.left = childnode
-                                    core::ptr::write((parentnodeaddress + 0x8) as *mut u64, tempnode.left);
-
-                                }
-                       
-                            }
-
-
-
-                        }
-                        
-                    }
-                }
+                //let filepointer = filepointer & 0xFFFFFFFF_FFFFFFF0;
+                // filepointer + 0x58 gives unicode_String of module
                 
-               
-
-
             }
 
-
-
+           
             vadcount +=1;
             traverse(*(rootnode.clone().right as *mut rtl_balanced_node));
 
@@ -354,7 +547,7 @@ pub extern "system" fn driver_entry(_driver: &mut DRIVER_OBJECT,
         //PsSetCreateProcessNotifyRoutine(processcreationcallback as *mut c_void, 0);
     
         let mut eprocess:u64 = 0;
-        PsLookupProcessByProcessId(8260 as HANDLE, &mut eprocess as *mut _ as *mut c_void);
+        PsLookupProcessByProcessId(6432 as HANDLE, &mut eprocess as *mut _ as *mut c_void);
 
         if eprocess==0{
             return 0;
@@ -415,11 +608,11 @@ pub extern "system" fn driver_entry(_driver: &mut DRIVER_OBJECT,
 
 
 
-pub fn unicodetostring(u:&UNICODE_STRING) -> [u8;1024] {
+pub fn unicodetostring(u:&mut UNICODE_STRING) -> [u8;2048] {
 
-    let mut buffer:[u8;1024] = [0;1024];
+    let mut buffer:[u8;2048] = [0;2048];
 
-    for i in 0..u.Length/2{
+    for i in 0..u.MaximumLength/2{
         let mut u16byte: u16 = 0;
         let mmcopy = MM_COPY_ADDRESS{address: (u.Buffer as usize + (i as usize*2)) as *mut c_void} ;
         let mut byteswritten = 0;
@@ -429,7 +622,13 @@ pub fn unicodetostring(u:&UNICODE_STRING) -> [u8;1024] {
             0x2, 
             &mut byteswritten)};
 
-        buffer[i as usize] = (u16byte&0xFF) as u8;    
+        if res==STATUS_SUCCESS{
+            if u16byte==0{
+                break;
+            }
+            buffer[i as usize] = (u16byte&0xFFFF) as u8;  
+        }
+          
     }
     
     return buffer;
