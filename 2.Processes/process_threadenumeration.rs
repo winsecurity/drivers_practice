@@ -141,49 +141,40 @@ pub extern "system" fn driver_entry(_driver: &mut DRIVER_OBJECT,
         
         //PsSetCreateProcessNotifyRoutine(processcreationcallback as *mut c_void, 0);
     
-        let mut eprocess = 0;
+        let mut eprocess:u64 = 0;
         PsLookupProcessByProcessId(PsGetCurrentProcessId(), &mut eprocess as *mut _ as *mut c_void);
 
         if eprocess==0{
             return 0;
         }
-    
-        // eprocess+0x440 = uniqueprocessid (8 bytes)
-        // eprocess+0x5a8 = imagefilename (15bytes)
-        // eprocess+0x448 = activeprocesslinks (_list_entry)
-        // eprocess+0x5e0 = threadlisthead (_list_entry)
-        // ethread+0x4e8 = threadlistentry
-        // ethread+0x478 = Cid = (processid, threadid)
-        let mut firstpid:u64 = core::ptr::read((eprocess+0x440) as *const u64);
-        
+      
+        let oureprocess = eprocess; 
+
         loop{
-            
 
-            let pid = core::ptr::read((eprocess+0x440) as *const u64);
-            let mut pname = core::ptr::read((eprocess+0x5a8) as *const [u8;16]);
-            pname[15] = 0;
-           
 
-            
-            DbgPrint("process %s: %I64d\n\0".as_ptr(),pname.as_ptr() as *const u8, pid as c_ulonglong);
-            
-            let firstthreadlink = core::ptr::read((eprocess+0x5e0) as *const u64);
-            
-            let mut ethread = firstthreadlink-0x4e8;
+            let mut filename =  core::ptr::read((eprocess+0x5a8) as *const [u8;16]);
+            filename[15] = 0;
+            DbgPrint("processname: %s\n\0".as_ptr(), filename.as_ptr() as *const u8);
+
+            let lastethread = core::ptr::read((eprocess+0x5e0+0x8) as *const u64)-0x4e8;
+
+            let mut ethread = core::ptr::read((eprocess+0x5e0) as *const u64)-0x4e8;
             loop{
+
                 let threadid = core::ptr::read((ethread+0x478+0x8) as *const u64);
-                DbgPrint("\tthreadid: %I64d\n\0".as_ptr(),threadid as c_ulonglong);
-                let nextthreadlink = core::ptr::read((ethread+0x4e8) as *const u64);
-                if nextthreadlink==firstthreadlink{
+                DbgPrint("\tthreadid: %I64d\n\0".as_ptr(), threadid as c_ulonglong);
+
+                if ethread==lastethread{
                     break;
                 }
-                ethread = nextthreadlink-0x4e8;
+                ethread = core::ptr::read((ethread+0x4e8) as *const u64)-0x4e8;
 
             }
 
-           
+
             eprocess = core::ptr::read((eprocess+0x448) as *const u64)-0x448;
-            if firstpid==core::ptr::read((eprocess+0x440) as *const u64){
+            if eprocess == oureprocess{
                 break;
             }
 
